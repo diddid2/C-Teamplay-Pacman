@@ -1,4 +1,4 @@
-#define _CRT_SECURE_NO_WARNINGS //abcd 1시 35분 커밋
+#define _CRT_SECURE_NO_WARNINGS //ㅈㅂ
 #define _WIN32_WINNT 0x0600
 #include <windows.h>
 #include <stdio.h>
