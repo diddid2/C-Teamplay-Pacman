@@ -235,7 +235,7 @@ void compose_frameBuffer_from_game_state() {
         frameBuffer[idx].Char.UnicodeChar = L'C';
         frameBuffer[idx].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
     }
-
+     
     // UI 텍스트
     wchar_t ui[128];
     swprintf(ui, 128, L" SCORE: %d   LIVES: %d ", player.score, player.lives);
@@ -283,15 +283,95 @@ void render_partial_updates(HANDLE hOut, bool forceFullWrite) {
     }
 }
 
-void move_ghost(Ghost* g) {
+void move_ghost(Ghost* g) { // 유령 움직임
     if (!g->alive) { g->r = g->sr; g->c = g->sc; g->alive = true; g->vulnerable = false; return; }
-    int dr[4] = { -1,0,1,0 }; int dc[4] = { 0,1,0,-1 };
-    int tryOrder[5]; tryOrder[0] = g->dir;
-    for (int i = 1; i < 5; i++) tryOrder[i] = rand() % 4;
-    for (int i = 0; i < 5; i++) {
-        int d = tryOrder[i]; int nr = g->r + dr[d], nc = g->c + dc[d];
-        if (nr < 0 || nr >= MAP_ROWS || nc < 0 || nc >= MAP_COLS) continue;
-        if (!is_wall(nr, nc)) { g->r = nr; g->c = nc; g->dir = d; return; }
+
+    int dr[4] = { -1, 0, 1, 0 };
+    int dc[4] = { 0, 1, 0, -1 };
+    int opposite_dir[4] = { 2, 3, 0, 1 }; // 각 방향의 반대 방향 (0->2, 1->3, 2->0, 3->1)
+
+    int valid_dirs[4]; // 이동 가능한 유효 방향을 저장할 배열
+    int num_valid_dirs = 0; // 유효한 방향의 개수
+
+    // 4방향을 검사, 이동 가능 후보군
+    for (int d = 0; d < 4; d++) {
+        // 현재 진행 방향의 180도 반대 방향으로는 가지 않도록
+        if (d == opposite_dir[g->dir]) continue;
+
+        int nr = g->r + dr[d];
+        int nc = g->c + dc[d];
+
+        if (!is_wall(nr, nc)) { // 벽이 아니면
+            valid_dirs[num_valid_dirs] = d; // 유효한 방향으로 추가
+            num_valid_dirs++;
+        }
+    }
+
+    // 180 제외 갈 곳 없으면
+    if (num_valid_dirs == 0) {
+        int d = opposite_dir[g->dir];
+        int nr = g->r + dr[d];
+        int nc = g->c + dc[d];
+        if (!is_wall(nr, nc)) {
+            valid_dirs[0] = d;
+            num_valid_dirs = 1;
+        }
+    }
+
+    // 갈 곳이 아예 없는 경우 움직이지 않고 반환
+    if (num_valid_dirs == 0) {
+        return;
+    }
+
+    int best_dir = -1; // 최종 선택될 방향
+
+    // 파워 펠릿 먹음 상태
+    if (globalVulnerable) {
+        // 추격 모드에서 플레이어로부터 가장 멀어지는 방향 선택
+        int max_dist = -1;
+        for (int i = 0; i < num_valid_dirs; i++) {
+            int d = valid_dirs[i];
+            int nr = g->r + dr[d];
+            int nc = g->c + dc[d];
+            // 맨해튼 거리 함수를 이용
+            int dist = manhattan(nr, nc, player.r, player.c);
+
+            if (dist > max_dist) {
+                max_dist = dist;
+                best_dir = d;
+            }
+            //    만약 똑같이 멀어지는 방향이 여러 개일 경우 50%로 결정
+            else if (dist == max_dist) {
+                if (rand() % 2 == 0) {
+                    best_dir = d;
+                }
+            }
+        }
+    }
+
+    // 일반모드 or 추격 모드에서 유효한 'best_dir'를 찾지 못한 경우
+    if (best_dir == -1) {
+        // 직진 우선
+        bool continued = false;
+        for (int i = 0; i < num_valid_dirs; i++) {
+            if (valid_dirs[i] == g->dir) {
+                best_dir = g->dir;
+                continued = true;
+                break;
+            }
+        }
+
+        // 랜덤 선택, 참고 영상에서의 RNG 문제 해결
+        if (!continued) {
+            best_dir = valid_dirs[rand() % num_valid_dirs];
+        }
+    }
+
+    // 최종 결정된 방향으로 이동
+    if (best_dir != -1) {
+        g->r = g->r + dr[best_dir];
+        g->c = g->c + dc[best_dir];
+        g->dir = best_dir;
     }
 }
 
@@ -367,6 +447,7 @@ int main() {
     WriteConsoleOutputW(hOut, frameBuffer, bufSize, bufCoord, &writeRegion);
     while (!(GetAsyncKeyState(VK_RETURN) & 0x8000)) Sleep(40);
 
+    system("cls");
     init_world();
     compose_frameBuffer_from_game_state();
     render_partial_updates(hOut, true);
