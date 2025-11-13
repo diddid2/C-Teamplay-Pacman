@@ -68,7 +68,7 @@ wchar_t* wcmap[MAP_ROWS] = {
     L"■·■·■■·■■·■■■·■·■·■■■■■■■■■■■·■·■·■■■·■■·■■·■·■",
     L"■·■····■■··············■··············■■····■·■",
     L"■·■·■■■■■■■■■·■·■■■■■■·■·■■■■■■·■·■■■■■■■■■·■·■",
-    L"■·■·■■■■■■■■■·■·■······■······■·■·■■■■■■■■■·■·■",
+    L"■·■·■■■■■■■■■·■·■·············■·■·■■■■■■■■■·■·■",
     L"■·■·············■·■■■■·■·■■■■·■·············■·■",
     L"■·■·■■■■■■■■■■■·■·■■■■·■·■■■■·■·■■■■■■■■■■■·■·■",
     L"■○·····················■·····················○■",
@@ -500,6 +500,50 @@ void check_collect_and_collision() {
     }
 }
 
+
+//게임 오버 화면
+void show_game_over(HANDLE hOut, int finalScore) {
+    // 프레임을 지우기
+    for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) {
+        frameBuffer[i].Char.UnicodeChar = L' ';
+        frameBuffer[i].Attributes = 0;
+    }
+
+    wchar_t title[] = L"======== 게임 오버 ========";
+    wchar_t scoreLine[128];
+    swprintf(scoreLine, 128, L"FINAL SCORE: %d", finalScore);
+    wchar_t prompt[] = L"엔터 키를 누르면 종료됩니다";
+
+    // 중앙에 배치 계산 (간단히 가로 중앙 정렬)
+    int rr = 10;
+    int cc_title = (SCREEN_COLS - (int)wcslen(title)) / 2;
+    int cc_score = (SCREEN_COLS - (int)wcslen(scoreLine)) / 2;
+    int cc_prompt = (SCREEN_COLS - (int)wcslen(prompt)) / 2;
+
+    for (int i = 0; title[i]; i++) {
+        frameBuffer[rr * SCREEN_COLS + cc_title + i].Char.UnicodeChar = title[i];
+        frameBuffer[rr * SCREEN_COLS + cc_title + i].Attributes = FOREGROUND_RED | FOREGROUND_INTENSITY;
+    }
+    for (int i = 0; scoreLine[i]; i++) {
+        frameBuffer[(rr + 2) * SCREEN_COLS + cc_score + i].Char.UnicodeChar = scoreLine[i];
+        frameBuffer[(rr + 2) * SCREEN_COLS + cc_score + i].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+    }
+    for (int i = 0; prompt[i]; i++) {
+        frameBuffer[(rr + 4) * SCREEN_COLS + cc_prompt + i].Char.UnicodeChar = prompt[i];
+        frameBuffer[(rr + 4) * SCREEN_COLS + cc_prompt + i].Attributes = FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+    }
+
+    // 전체 출력
+    COORD bufSize = { (SHORT)SCREEN_COLS, (SHORT)SCREEN_ROWS };
+    COORD bufCoord = { 0, 0 };
+    SMALL_RECT writeRegion = { 0, 0, (SHORT)(SCREEN_COLS - 1), (SHORT)(SCREEN_ROWS - 1) };
+    WriteConsoleOutputW(hOut, frameBuffer, bufSize, bufCoord, &writeRegion);
+
+    // 엔터키 대기
+    while (!(GetAsyncKeyState(VK_RETURN) & 0x8000)) Sleep(50);
+}
+
+
 int main() {
     srand((unsigned int)time(NULL));
     setConsoleSizeAndFont(); hideCursor();
@@ -658,6 +702,9 @@ int main() {
             while (!(GetAsyncKeyState(VK_RETURN) & 0x8000)) Sleep(50);
             break;
         }
+
+        //게임 오버 화면
+        if (player.lives <= 0) { show_game_over(hOut, player.score); break; }
 
         Sleep(1);
     }
