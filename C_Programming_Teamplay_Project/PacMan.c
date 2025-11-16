@@ -568,16 +568,19 @@ int main() {
         frameBuffer[i].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
     }
 
-    wchar_t* intro1 = L"==================================";
-    wchar_t* intro2 = L"===         Pac-Man!         ===";
-    wchar_t* intro3 = L"   엔터 키를 누르면 게임이 시작됩니다   ";
+    wchar_t* intro1 = L"====================================";
+    wchar_t* intro2 = L"=             Pac-Man!             =";
+    wchar_t* intro3 = L"=엔터 키를 누르면 게임이 시작됩니다=";
 
-    int r0 = 10, c0 = 33;
+    int r0 = 10;
+    int introLen = (int)wcslen(intro1);
+    int c0 = (SCREEN_COLS - introLen) / 2;
 
     for (int i = 0; intro1[i]; i++) frameBuffer[r0 * SCREEN_COLS + c0 + i].Char.UnicodeChar = intro1[i];
     for (int i = 0; intro2[i]; i++) frameBuffer[(r0 + 1) * SCREEN_COLS + c0 + i].Char.UnicodeChar = intro2[i];
     for (int i = 0; intro3[i]; i++) frameBuffer[(r0 + 2) * SCREEN_COLS + c0 + i].Char.UnicodeChar = intro3[i];
     for (int i = 0; intro1[i]; i++) frameBuffer[(r0 + 3) * SCREEN_COLS + c0 + i].Char.UnicodeChar = intro1[i];
+
 
     COORD bufSize = { (SHORT)SCREEN_COLS, (SHORT)SCREEN_ROWS };
     COORD bufCoord = { 0, 0 };
