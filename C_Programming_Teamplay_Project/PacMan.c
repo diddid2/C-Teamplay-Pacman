@@ -1,4 +1,4 @@
-#define _CRT_SECURE_NO_WARNINGS //ㅈㅂ
+#define _CRT_SECURE_NO_WARNINGS
 #define _WIN32_WINNT 0x0600
 #include <windows.h>
 #include <stdio.h>
@@ -21,7 +21,7 @@
 #define CH_EMPTY   L'　'
 #define CH_GHOST   L'○'
 #define CH_PLAYER  L'●'
-#define CH_POWER   L'＠'   // 파워펠릿 문자
+#define CH_POWER   L'＠'   // 파워펠릿 문자 여긴 전각인데 인게임에서는 맵 밀림때문에 반각으로 대체함
 
 typedef struct Player { int r, c, score, lives; } Player;
 typedef struct Ghost {
