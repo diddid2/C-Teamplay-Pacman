@@ -6,6 +6,10 @@
 #include <time.h>
 #include <stdbool.h>
 #include <wchar.h>
+#include <string.h>
+#include <mmsystem.h>
+#include <io.h>
+#pragma comment(lib, "winmm.lib")
 
 #define MAP_ROWS 23
 #define MAP_COLS 47
@@ -17,6 +21,7 @@
 #define CH_EMPTY   L'　'
 #define CH_GHOST   L'○'
 #define CH_PLAYER  L'●'
+#define CH_POWER   L'＠'   // 파워펠릿 문자
 
 typedef struct Player { int r, c, score, lives; } Player;
 typedef struct Ghost {
@@ -48,6 +53,20 @@ double playerSpeed = 8.0;
 DWORD ghostMoveInterval = 300;
 
 int currentDirR = 0, currentDirC = 0;
+int desiredDirR = 0, desiredDirC = 0;
+const wchar_t* SND_START = L"/sfx/start.wav";
+const wchar_t* SND_COIN = L"/sfx/coin.wav";
+const wchar_t* SND_POWER = L"/sfx/power.wav";
+const wchar_t* SND_EATGHOST = L"/sfx/eat_ghost.wav";
+const wchar_t* SND_DIE = L"/sfx/die.wav";
+const wchar_t* SND_GAMEOVER = L"/sfx/gameover.wav";
+const wchar_t* SND_CLEAR = L"/sfx/clear.wav";
+
+void playSoundIfExists(const wchar_t* path, DWORD flags) {
+    if (!path || !*path) return;
+    if (_waccess(path, 0) != 0) return;
+    PlaySoundW(path, NULL, SND_FILENAME | flags);
+}
 
 wchar_t* wcmap[MAP_ROWS] = {
     L"■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■",
@@ -56,7 +75,7 @@ wchar_t* wcmap[MAP_ROWS] = {
     L"■·■■■■·■■■■■■■■·■■■■■■·■·■■■■■■·■■■■■■■■·■■■■·■",
     L"■·■·········································■·■",
     L"■·■·■■■■■■■■■·■·■·■■■■■■■■■■■·■·■·■■■■■■■■■·■·■",
-    L"■·■····■■·····■·■······■······■·■·····■■····■·■",
+    L"■·■···＠■■·····■·■······■······■·■·····■■＠···■·■",
     L"■·■·■■·■■·■■■·■·■■■■■■·■·■■■■■■·■·■■■·■■·■■·■·■",
     L"■·■·■■·■■·■■■·■·■　　　　　　　　　　　　　■　■·■■■·■■·■■·■·■",
     L"■·■·■■·■■·····■·■　■■■■　　　■■■■　■·■·····■■·■■·■·■",
@@ -66,7 +85,7 @@ wchar_t* wcmap[MAP_ROWS] = {
     L"■·■·■■·■■·····■·■　■■■■■■■■■■■　■·■·····■■·■■·■·■",
     L"■·■·■■·■■·■■■·■·■　　　　　　　　　　　　　■·■·■■■·■■·■■·■·■",
     L"■·■·■■·■■·■■■·■·■·■■■■■■■■■■■·■·■·■■■·■■·■■·■·■",
-    L"■·■····■■··············■··············■■····■·■",
+    L"■·■···＠■■··············■··············■■＠···■·■",
     L"■·■·■■■■■■■■■·■·■■■■■■·■·■■■■■■·■·■■■■■■■■■·■·■",
     L"■·■·■■■■■■■■■·■·■·············■·■·■■■■■■■■■·■·■",
     L"■·■·············■·■■■■·■·■■■■·■·············■·■",
@@ -77,6 +96,7 @@ wchar_t* wcmap[MAP_ROWS] = {
 
 void compose_frameBuffer_from_game_state();
 void render_partial_updates(HANDLE hOut, bool forceFullWrite);
+void check_collect_and_collision();
 
 void setConsoleSizeAndFont() {
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -96,7 +116,6 @@ void setConsoleSizeAndFont() {
     SetCurrentConsoleFontEx(hOut, FALSE, &cfi);
 }
 
-
 void hideCursor() {
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     CONSOLE_CURSOR_INFO ci = { 1, FALSE };
@@ -110,9 +129,8 @@ bool is_wall(int r, int c) {
 }
 int manhattan(int a, int b, int c, int d) { return abs(a - c) + abs(b - d); }
 
-// wcmap을 스캔하여 코인/플레이어/유령 배치
+// wcmap을 스캔하여 코인/플레이어/유령/파워펠릿 배치
 void init_world() {
-    // 코인/파워 초기화
     for (int r = 0; r < MAP_ROWS; r++) {
         for (int c = 0; c < MAP_COLS; c++) {
             coin[r][c] = false;
@@ -120,22 +138,19 @@ void init_world() {
         }
     }
 
-    // 기본값
     player.score = 0; player.lives = 3;
-    player.r = 12; player.c = 49; // fallback(맵에 ● 없을 때)
+    player.r = 12; player.c = 49;
     for (int i = 0; i < 4; i++) {
         ghosts[i].r = ghosts[i].sr = 0;
         ghosts[i].c = ghosts[i].sc = 0;
         ghosts[i].dir = i % 4;
-        ghosts[i].gtype = i; // 0:Red,1:Orange,2:Blue,3:Pink
+        ghosts[i].gtype = i;
         ghosts[i].alive = true;
         ghosts[i].vulnerable = false;
     }
     int ghostCount = 0;
 
-    // 맵 스캔
     for (int r = 0; r < MAP_ROWS; r++) {
-        // 안전장치: wcmap[r]가 NULL이면 전부 벽 취급
         if (wcmap[r] == NULL) continue;
         for (int c = 0; c < MAP_COLS; c++) {
             wchar_t ch = wcmap[r][c];
@@ -143,16 +158,17 @@ void init_world() {
             if (ch == CH_COIN) {
                 coin[r][c] = true;
             }
+            else if (ch == CH_POWER) {
+                powerPellet[r][c] = true;
+            }
 
             if (ch == CH_PLAYER) {
                 player.r = r; player.c = c;
-                //wcmap[r][c] = CH_EMPTY; // 스폰 심볼은 빈칸으로 치환
             }
             else if (ch == CH_GHOST && ghostCount < 4) {
                 ghosts[ghostCount].r = ghosts[ghostCount].sr = r;
                 ghosts[ghostCount].c = ghosts[ghostCount].sc = c;
                 ghostCount++;
-                //wcmap[r][c] = CH_EMPTY; // 스폰 심볼은 빈칸으로 치환
             }
         }
     }
@@ -161,8 +177,9 @@ void init_world() {
     powerEndTime = 0;
     currentDirC = 0;
     currentDirR = 0;
+    desiredDirC = 0;
+    desiredDirR = 0;
 
-    // 유령이 4마리 미만이면 적당한 빈칸에 보정 배치
     for (int i = ghostCount; i < 4; i++) {
         bool placed = false;
         for (int r = 1; r < MAP_ROWS - 1 && !placed; r++) {
@@ -179,7 +196,6 @@ void init_world() {
 
 // 화면 그리기
 void compose_frameBuffer_from_game_state() {
-    // 배경/타일
     for (int r = 0; r < MAP_ROWS; r++) {
         for (int c = 0; c < MAP_COLS; c++) {
             int idx = r * SCREEN_COLS + c;
@@ -190,13 +206,11 @@ void compose_frameBuffer_from_game_state() {
                 frameBuffer[idx].Attributes = FOREGROUND_BLUE | FOREGROUND_INTENSITY;
             }
             else {
-                // 바닥
                 frameBuffer[idx].Char.UnicodeChar = L' ';
                 frameBuffer[idx].Attributes = 0;
 
-                // 파워펠릿/코인
                 if (powerPellet[r][c]) {
-                    frameBuffer[idx].Char.UnicodeChar = L'＠';
+                    frameBuffer[idx].Char.UnicodeChar = L'@'; // 표시용
                     frameBuffer[idx].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
                 }
                 else if (coin[r][c]) {
@@ -207,7 +221,6 @@ void compose_frameBuffer_from_game_state() {
         }
     }
 
-    // UI 라인 초기화
     int uiRow = SCREEN_ROWS - 1;
     for (int c = 0; c < SCREEN_COLS; c++) {
         int idx = uiRow * SCREEN_COLS + c;
@@ -215,7 +228,6 @@ void compose_frameBuffer_from_game_state() {
         frameBuffer[idx].Attributes = 0;
     }
 
-    // 유령
     for (int i = 0; i < 4; i++) {
         if (!ghosts[i].alive) continue;
         int gr = ghosts[i].r, gc = ghosts[i].c;
@@ -223,17 +235,15 @@ void compose_frameBuffer_from_game_state() {
         int idx = gr * SCREEN_COLS + gc;
         if (ghosts[i].vulnerable || globalVulnerable) {
             frameBuffer[idx].Char.UnicodeChar = L'V';
-            frameBuffer[idx].Attributes = FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+            frameBuffer[idx].Attributes = FOREGROUND_RED | FOREGROUND_INTENSITY;
         }
         else {
-            // Chase 또는 Scatter 모드
             frameBuffer[idx].Char.UnicodeChar = L'G';
             WORD attr =
                 (i == 0 ? (FOREGROUND_RED | FOREGROUND_INTENSITY) :
                     i == 1 ? (FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE) :
                     i == 2 ? (FOREGROUND_BLUE | FOREGROUND_GREEN | FOREGROUND_INTENSITY) :
                     (FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_INTENSITY));
-            // gtype을 사용하도록 색상 수정 (gtype: 0:Red, 1:Orange, 2:Blue, 3:Pink)
             switch (ghosts[i].gtype)
             {
             case 0: attr = FOREGROUND_RED | FOREGROUND_INTENSITY; break;
@@ -245,14 +255,12 @@ void compose_frameBuffer_from_game_state() {
         }
     }
 
-    // 플레이어
     if (player.r >= 0 && player.r < MAP_ROWS && player.c >= 0 && player.c < MAP_COLS) {
         int idx = player.r * SCREEN_COLS + player.c;
         frameBuffer[idx].Char.UnicodeChar = L'C';
         frameBuffer[idx].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
     }
 
-    // UI 텍스트
     wchar_t ui[128];
     swprintf(ui, 128, L" SCORE: %d    LIVES: %d ", player.score, player.lives);
     int startCol = 0; int uiRowIdx = (SCREEN_ROWS - 1) * SCREEN_COLS + startCol;
@@ -299,31 +307,28 @@ void render_partial_updates(HANDLE hOut, bool forceFullWrite) {
     }
 }
 
-void move_ghost(Ghost* g) { // 유령 움직임 NEW: 새로 유령들의 chase 상태 구현, 유령들마다 성격 구현 
+void move_ghost(Ghost* g) {
     if (!g->alive) { g->r = g->sr; g->c = g->sc; g->alive = true; g->vulnerable = false; return; }
 
     int dr[4] = { -1, 0, 1, 0 };
     int dc[4] = { 0, 1, 0, -1 };
-    int opposite_dir[4] = { 2, 3, 0, 1 }; // 각 방향의 반대 방향 (0->2, 1->3, 2->0, 3->1)
+    int opposite_dir[4] = { 2, 3, 0, 1 };
 
-    int valid_dirs[4]; // 이동 가능한 유효 방향을 저장할 배열
-    int num_valid_dirs = 0; // 유효한 방향의 개수
+    int valid_dirs[4];
+    int num_valid_dirs = 0;
 
-    // 4방향을 검사, 이동 가능 후보군
     for (int d = 0; d < 4; d++) {
-        // 현재 진행 방향의 180도 반대 방향으로는 가지 않도록
         if (d == opposite_dir[g->dir]) continue;
 
         int nr = g->r + dr[d];
         int nc = g->c + dc[d];
 
-        if (!is_wall(nr, nc)) { // 벽이 아니면
-            valid_dirs[num_valid_dirs] = d; // 유효한 방향으로 추가
-            num_valid_dirs++; // 유효한 방향 개수 증가
+        if (!is_wall(nr, nc)) {
+            valid_dirs[num_valid_dirs] = d;
+            num_valid_dirs++;
         }
     }
 
-    // 180 제외 갈 곳 없으면
     if (num_valid_dirs == 0) {
         int d = opposite_dir[g->dir];
         int nr = g->r + dr[d];
@@ -334,29 +339,24 @@ void move_ghost(Ghost* g) { // 유령 움직임 NEW: 새로 유령들의 chase �
         }
     }
 
-    // 갈 곳이 아예 없는 경우 움직이지 않고 반환
     if (num_valid_dirs == 0) {
         return;
     }
 
-    int best_dir = -1; // 최종 선택될 방향
+    int best_dir = -1;
 
-    // 파워 펠릿 먹음 상태
     if (globalVulnerable) {
-        // 추격 모드에서 플레이어로부터 가장 멀어지는 방향 선택
         int max_dist = -1;
         for (int i = 0; i < num_valid_dirs; i++) {
             int d = valid_dirs[i];
             int nr = g->r + dr[d];
             int nc = g->c + dc[d];
-            // 맨해튼 거리 함수를 이용
             int dist = manhattan(nr, nc, player.r, player.c);
 
             if (dist > max_dist) {
                 max_dist = dist;
                 best_dir = d;
             }
-            //    만약 똑같이 멀어지는 방향이 여러 개일 경우 50%로 결정
             else if (dist == max_dist) {
                 if (rand() % 2 == 0) {
                     best_dir = d;
@@ -365,11 +365,9 @@ void move_ghost(Ghost* g) { // 유령 움직임 NEW: 새로 유령들의 chase �
         }
     }
     else {
-        // CHASE, SCATTER
         int targetR, targetC;
 
         if (currentGhostMode == SCATTER) {
-            // scatter 상태
             switch (g->gtype) {
             case 0: targetR = 1; targetC = MAP_COLS - 2; break;
             case 1: targetR = MAP_ROWS - 2; targetC = 1; break;
@@ -379,7 +377,6 @@ void move_ghost(Ghost* g) { // 유령 움직임 NEW: 새로 유령들의 chase �
             }
         }
         else {
-
             switch (g->gtype) {
             case 0:
                 targetR = player.r;
@@ -408,7 +405,7 @@ void move_ghost(Ghost* g) { // 유령 움직임 NEW: 새로 유령들의 chase �
                 int vecC = pivotC - blinkyC;
 
                 targetR = blinkyR + (vecR * 2);
-                targetC = blinkyC + (vecC * 2); // 이 줄이 누락되었던 것 같습니다.
+                targetC = blinkyC + (vecC * 2);
                 break;
             }
             case 3:
@@ -441,7 +438,6 @@ void move_ghost(Ghost* g) { // 유령 움직임 NEW: 새로 유령들의 chase �
         }
     }
 
-    // 최종 결정된 방향으로 이동
     if (best_dir != -1) {
         g->r = g->r + dr[best_dir];
         g->c = g->c + dc[best_dir];
@@ -456,10 +452,12 @@ void check_collect_and_collision() {
         globalVulnerable = true;
         powerEndTime = GetTickCount() + 8000;
         for (int i = 0; i < 4; i++) ghosts[i].vulnerable = true;
+        playSoundIfExists(SND_POWER, SND_ASYNC);
     }
     else if (coin[player.r][player.c]) {
         coin[player.r][player.c] = false;
         player.score += 10;
+        playSoundIfExists(SND_COIN, SND_ASYNC);
     }
 
     for (int i = 0; i < 4; i++) {
@@ -467,15 +465,20 @@ void check_collect_and_collision() {
         if (!g->alive) continue;
         if (g->r == player.r && g->c == player.c) {
             if (g->vulnerable || globalVulnerable) {
-                player.score += 200; g->alive = false;
+                player.score += 200;
+                g->alive = false;
+                playSoundIfExists(SND_EATGHOST, SND_ASYNC);
             }
             else {
                 player.lives--;
+                playSoundIfExists(SND_DIE, SND_ASYNC);
+
                 int bestR = -1, bestC = -1, bestDist = -1;
                 for (int r = 0; r < MAP_ROWS; r++) {
                     for (int c = 0; c < MAP_COLS; c++) {
                         if (is_wall(r, c)) continue;
-                        int mind = 100000; for (int gg = 0; gg < 4; gg++) {
+                        int mind = 100000;
+                        for (int gg = 0; gg < 4; gg++) {
                             int d = manhattan(r, c, ghosts[gg].sr, ghosts[gg].sc);
                             if (d < mind) mind = d;
                         }
@@ -488,7 +491,6 @@ void check_collect_and_collision() {
                     ghosts[j].r = ghosts[j].sr; ghosts[j].c = ghosts[j].sc;
                     ghosts[j].alive = true; ghosts[j].vulnerable = false;
                 }
-                // NEW 상태 초기화
                 globalVulnerable = false;
                 currentGhostMode = SCATTER;
                 modePhase = 0;
@@ -500,10 +502,10 @@ void check_collect_and_collision() {
     }
 }
 
-
 //게임 오버 화면
 void show_game_over(HANDLE hOut, int finalScore) {
-    // 프레임을 지우기
+    playSoundIfExists(SND_GAMEOVER, SND_ASYNC);
+
     for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) {
         frameBuffer[i].Char.UnicodeChar = L' ';
         frameBuffer[i].Attributes = 0;
@@ -514,7 +516,6 @@ void show_game_over(HANDLE hOut, int finalScore) {
     swprintf(scoreLine, 128, L"FINAL SCORE: %d", finalScore);
     wchar_t prompt[] = L"엔터 키를 누르면 종료됩니다";
 
-    // 중앙에 배치 계산 (간단히 가로 중앙 정렬)
     int rr = 10;
     int cc_title = (SCREEN_COLS - (int)wcslen(title)) / 2;
     int cc_score = (SCREEN_COLS - (int)wcslen(scoreLine)) / 2;
@@ -533,27 +534,19 @@ void show_game_over(HANDLE hOut, int finalScore) {
         frameBuffer[(rr + 4) * SCREEN_COLS + cc_prompt + i].Attributes = FOREGROUND_GREEN | FOREGROUND_INTENSITY;
     }
 
-    // 전체 출력
     COORD bufSize = { (SHORT)SCREEN_COLS, (SHORT)SCREEN_ROWS };
     COORD bufCoord = { 0, 0 };
     SMALL_RECT writeRegion = { 0, 0, (SHORT)(SCREEN_COLS - 1), (SHORT)(SCREEN_ROWS - 1) };
     WriteConsoleOutputW(hOut, frameBuffer, bufSize, bufCoord, &writeRegion);
 
-    // 엔터키 대기
     while (!(GetAsyncKeyState(VK_RETURN) & 0x8000)) Sleep(50);
 }
 
-
-
-
 int main() {
-
-    //시작 화면
     srand((unsigned int)time(NULL));
     setConsoleSizeAndFont();
     hideCursor();
 
-    // 필수 버퍼 할당
     frameBuffer = (CHAR_INFO*)malloc(sizeof(CHAR_INFO) * SCREEN_ROWS * SCREEN_COLS);
     prevFrameBuffer = (CHAR_INFO*)malloc(sizeof(CHAR_INFO) * SCREEN_ROWS * SCREEN_COLS);
     tmpRowBuffer = (CHAR_INFO*)malloc(sizeof(CHAR_INFO) * SCREEN_COLS);
@@ -570,9 +563,6 @@ int main() {
 
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
 
-    // ------------------------------------
-    //  시작 화면 버퍼 내용 채우기
-    // ------------------------------------
     for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) {
         frameBuffer[i].Char.UnicodeChar = L' ';
         frameBuffer[i].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
@@ -593,23 +583,16 @@ int main() {
     COORD bufCoord = { 0, 0 };
     SMALL_RECT writeRegion = { 0, 0, (SHORT)(SCREEN_COLS - 1), (SHORT)(SCREEN_ROWS - 1) };
 
-    // 실제 출력
     WriteConsoleOutputW(hOut, frameBuffer, bufSize, bufCoord, &writeRegion);
 
-    // 엔터 입력 기다림
     while (!(GetAsyncKeyState(VK_RETURN) & 0x8000))
         Sleep(40);
 
-
-
-
-
-
+    playSoundIfExists(SND_START, SND_ASYNC);
 
     system("cls");
     init_world();
 
-    // NEW
     modeSwitchTime = GetTickCount() + phaseDurations[0];
     currentGhostMode = SCATTER;
     modePhase = 0;
@@ -632,59 +615,65 @@ int main() {
         lastTime = curTime;
 
         bool anyDirKey = false;
-        int newDirR = 0, newDirC = 0; // 나중에 수정할것
+        int newDirR = 0, newDirC = 0;
         if (GetAsyncKeyState(VK_LEFT) & 0x8000 || GetAsyncKeyState('A') & 0x8000) { newDirR = 0; newDirC = -1; anyDirKey = true; }
         else if (GetAsyncKeyState(VK_RIGHT) & 0x8000 || GetAsyncKeyState('D') & 0x8000) { newDirR = 0; newDirC = 1; anyDirKey = true; }
         if (GetAsyncKeyState(VK_UP) & 0x8000 || GetAsyncKeyState('W') & 0x8000) { newDirR = -1; newDirC = 0; anyDirKey = true; }
         else if (GetAsyncKeyState(VK_DOWN) & 0x8000 || GetAsyncKeyState('S') & 0x8000) { newDirR = 1; newDirC = 0; anyDirKey = true; }
 
-
-
-
-
-        // NEW
         if (anyDirKey) {
+            desiredDirR = newDirR;
+            desiredDirC = newDirC;
 
-            int nextR = player.r + newDirR;
-            int nextC = player.c + newDirC;
-            if (!is_wall(nextR, nextC)) {
-                if (newDirR != currentDirR || newDirC != currentDirC) {
-                    currentDirR = newDirR;
-                    currentDirC = newDirC;
+            if (currentDirR == 0 && currentDirC == 0) {
+                int nextR = player.r + desiredDirR;
+                int nextC = player.c + desiredDirC;
+                if (!is_wall(nextR, nextC)) {
+                    currentDirR = desiredDirR;
+                    currentDirC = desiredDirC;
                     playerMoveAcc = 0.0;
                 }
-            }
-            else {
-                // (수정) Code 2의 로직을 따라 이 'else' 블록은 비워둡니다.
-                // (기존 Code 1의 버그가 있던 부분)
             }
         }
 
         if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) break;
 
-        if (currentDirR != 0 || currentDirC != 0) {
-            playerMoveAcc += dt * playerSpeed;
-            while (playerMoveAcc >= 1.0) {
-                int targetR = player.r + currentDirR;
-                int targetC = player.c + currentDirC;
-                if (!is_wall(targetR, targetC)) {
-                    playerMoveAcc -= 1.0;
-                    player.r = targetR; player.c = targetC;
-                    check_collect_and_collision();
-                }
-                else {
-                    playerMoveAcc = 0.0;
-                    break;
+        playerMoveAcc += dt * playerSpeed;
+        while (playerMoveAcc >= 1.0) {
+            if ((desiredDirR != 0 || desiredDirC != 0) &&
+                (desiredDirR != currentDirR || desiredDirC != currentDirC)) {
+
+                int tryR = player.r + desiredDirR;
+                int tryC = player.c + desiredDirC;
+
+                if (!is_wall(tryR, tryC)) {
+                    currentDirR = desiredDirR;
+                    currentDirC = desiredDirC;
                 }
             }
-        }
-        else {
-            playerMoveAcc = 0.0;
+
+            if (currentDirR == 0 && currentDirC == 0) {
+                playerMoveAcc = 0.0;
+                break;
+            }
+
+            int targetR = player.r + currentDirR;
+            int targetC = player.c + currentDirC;
+
+            if (!is_wall(targetR, targetC)) {
+                playerMoveAcc -= 1.0;
+                player.r = targetR;
+                player.c = targetC;
+                check_collect_and_collision();
+            }
+            else {
+                playerMoveAcc = 0.0;
+                break;
+            }
         }
 
         DWORD nowTick = GetTickCount();
 
-        // NEW
         if (modePhase < 7 && nowTick >= modeSwitchTime) {
             modePhase++;
             currentGhostMode = (currentGhostMode == SCATTER) ? CHASE : SCATTER;
@@ -721,7 +710,12 @@ int main() {
                 if (coin[r][c] || powerPellet[r][c]) remain++;
 
         if (remain == 0) {
-            for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) { frameBuffer[i].Char.UnicodeChar = L' '; frameBuffer[i].Attributes = 0; }
+            playSoundIfExists(SND_CLEAR, SND_ASYNC);
+
+            for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) {
+                frameBuffer[i].Char.UnicodeChar = L' ';
+                frameBuffer[i].Attributes = 0;
+            }
             wchar_t msg1[128]; swprintf(msg1, 128, L"!! CONGRATS !!  ALL COLLECTED");
             wchar_t msg2[128]; swprintf(msg2, 128, L"FINAL SCORE: %d", player.score);
             int rr = 10, cc = 30;
@@ -731,13 +725,13 @@ int main() {
             while (!(GetAsyncKeyState(VK_RETURN) & 0x8000)) Sleep(50);
             break;
         }
-       
 
-        //게임 오버 화면
         if (player.lives <= 0) { show_game_over(hOut, player.score); break; }
 
         Sleep(1);
     }
+
+    PlaySoundW(NULL, NULL, 0);
 
     free(frameBuffer); free(prevFrameBuffer); free(tmpRowBuffer);
     HANDLE stdOut = GetStdHandle(STD_OUTPUT_HANDLE);
