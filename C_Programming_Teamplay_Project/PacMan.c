@@ -21,7 +21,7 @@
 #define CH_EMPTY   L'　'
 #define CH_GHOST   L'○'
 #define CH_PLAYER  L'●'
-#define CH_POWER   L'＠'   // 파워펠릿 문자 여긴 전각인데 인게임에서는 맵 밀림때문에 반각으로 대체함
+#define CH_POWER   L'＠'
 
 typedef struct Player { int r, c, score, lives; } Player;
 typedef struct Ghost {
@@ -29,7 +29,6 @@ typedef struct Ghost {
     bool alive, vulnerable;
 } Ghost;
 
-// 유령 AI 추가
 typedef enum { SCATTER, CHASE } GhostMode;
 GhostMode currentGhostMode = SCATTER;
 DWORD modeSwitchTime = 0;
@@ -54,18 +53,59 @@ DWORD ghostMoveInterval = 300;
 
 int currentDirR = 0, currentDirC = 0;
 int desiredDirR = 0, desiredDirC = 0;
-const wchar_t* SND_START = L"/sfx/start.wav";
-const wchar_t* SND_COIN = L"/sfx/coin.wav";
-const wchar_t* SND_POWER = L"/sfx/power.wav";
-const wchar_t* SND_EATGHOST = L"/sfx/eat_ghost.wav";
-const wchar_t* SND_DIE = L"/sfx/die.wav";
-const wchar_t* SND_GAMEOVER = L"/sfx/gameover.wav";
-const wchar_t* SND_CLEAR = L"/sfx/clear.wav";
 
-void playSoundIfExists(const wchar_t* path, DWORD flags) {
+const wchar_t* SND_START = L"./snd\\02. Game Start.mp3";
+const wchar_t* SND_COIN = L"./snd\\01. Coin - Credit.mp3";
+const wchar_t* SND_DOT = L"./snd\\03. Dot.mp3";
+const wchar_t* SND_POWER = L"./snd\\04. Energizer - Power Pellet.mp3";
+const wchar_t* SND_EATGHOST = L"./snd\\05. Eat Ghost.mp3";
+const wchar_t* SND_GHOSTEATEN = L"./snd\\06. Ghost Eaten.mp3";
+const wchar_t* SND_EXTRA_LIFE = L"./snd\\07. Extra Life.mp3";
+const wchar_t* SND_FRUIT = L"./snd\\08. Fruit.mp3";
+const wchar_t* SND_CLEAR = L"./snd\\09. First Intermission - They Meet.mp3";
+const wchar_t* SND_GAMEOVER = L"./snd\\10. Second Intermission - The Chase.mp3";
+const wchar_t* SND_CAUGHT = L"./snd\\12. Caught by a Ghost.mp3";
+const wchar_t* SND_SIREN = L"./snd\\13. Siren.mp3";
+
+bool sirenOn = false;
+DWORD sirenResumeTick = 0;
+bool extraLifeGiven = false;
+
+void playSe(const wchar_t* path) {
     if (!path || !*path) return;
     if (_waccess(path, 0) != 0) return;
-    PlaySoundW(path, NULL, SND_FILENAME | flags);
+    wchar_t cmd[512];
+    mciSendStringW(L"stop se", NULL, 0, NULL);
+    mciSendStringW(L"close se", NULL, 0, NULL);
+    swprintf(cmd, 512, L"open \"%s\" type mpegvideo alias se", path);
+    if (mciSendStringW(cmd, NULL, 0, NULL) != 0) return;
+    mciSendStringW(L"play se from 0", NULL, 0, NULL);
+}
+
+void startSiren() {
+    if (sirenOn) return;
+    if (!SND_SIREN || !*SND_SIREN) return;
+    if (_waccess(SND_SIREN, 0) != 0) return;
+    wchar_t cmd[512];
+    mciSendStringW(L"stop bgm", NULL, 0, NULL);
+    mciSendStringW(L"close bgm", NULL, 0, NULL);
+    swprintf(cmd, 512, L"open \"%s\" type mpegvideo alias bgm", SND_SIREN);
+    if (mciSendStringW(cmd, NULL, 0, NULL) != 0) return;
+    mciSendStringW(L"play bgm repeat", NULL, 0, NULL);
+    sirenOn = true;
+}
+
+void stopSiren() {
+    mciSendStringW(L"stop bgm", NULL, 0, NULL);
+    mciSendStringW(L"close bgm", NULL, 0, NULL);
+    sirenOn = false;
+}
+
+void stopAllSounds() {
+    mciSendStringW(L"stop se", NULL, 0, NULL);
+    mciSendStringW(L"close se", NULL, 0, NULL);
+    mciSendStringW(L"stop bgm", NULL, 0, NULL);
+    mciSendStringW(L"close bgm", NULL, 0, NULL);
 }
 
 wchar_t* wcmap[MAP_ROWS] = {
@@ -97,6 +137,7 @@ wchar_t* wcmap[MAP_ROWS] = {
 void compose_frameBuffer_from_game_state();
 void render_partial_updates(HANDLE hOut, bool forceFullWrite);
 void check_collect_and_collision();
+void check_extra_life();
 
 void setConsoleSizeAndFont() {
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -112,7 +153,6 @@ void setConsoleSizeAndFont() {
     cfi.dwFontSize.X = 14;
     cfi.dwFontSize.Y = 28;
     cfi.FontWeight = FW_NORMAL;
-
     SetCurrentConsoleFontEx(hOut, FALSE, &cfi);
 }
 
@@ -127,9 +167,9 @@ bool is_wall(int r, int c) {
     wchar_t ch = wcmap[r][c];
     return (ch == CH_WALL);
 }
+
 int manhattan(int a, int b, int c, int d) { return abs(a - c) + abs(b - d); }
 
-// wcmap을 스캔하여 코인/플레이어/유령/파워펠릿 배치
 void init_world() {
     for (int r = 0; r < MAP_ROWS; r++) {
         for (int c = 0; c < MAP_COLS; c++) {
@@ -138,8 +178,11 @@ void init_world() {
         }
     }
 
-    player.score = 0; player.lives = 3;
-    player.r = 12; player.c = 49;
+    player.score = 0;
+    player.lives = 3;
+    player.r = 12;
+    player.c = 49;
+
     for (int i = 0; i < 4; i++) {
         ghosts[i].r = ghosts[i].sr = 0;
         ghosts[i].c = ghosts[i].sc = 0;
@@ -194,7 +237,6 @@ void init_world() {
     }
 }
 
-// 화면 그리기
 void compose_frameBuffer_from_game_state() {
     for (int r = 0; r < MAP_ROWS; r++) {
         for (int c = 0; c < MAP_COLS; c++) {
@@ -210,7 +252,7 @@ void compose_frameBuffer_from_game_state() {
                 frameBuffer[idx].Attributes = 0;
 
                 if (powerPellet[r][c]) {
-                    frameBuffer[idx].Char.UnicodeChar = L'@'; // 표시용
+                    frameBuffer[idx].Char.UnicodeChar = L'@';
                     frameBuffer[idx].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
                 }
                 else if (coin[r][c]) {
@@ -263,7 +305,8 @@ void compose_frameBuffer_from_game_state() {
 
     wchar_t ui[128];
     swprintf(ui, 128, L" SCORE: %d    LIVES: %d ", player.score, player.lives);
-    int startCol = 0; int uiRowIdx = (SCREEN_ROWS - 1) * SCREEN_COLS + startCol;
+    int startCol = 0;
+    int uiRowIdx = (SCREEN_ROWS - 1) * SCREEN_COLS + startCol;
     for (int i = 0; ui[i] && startCol + i < SCREEN_COLS; i++) {
         frameBuffer[uiRowIdx + i].Char.UnicodeChar = ui[i];
         frameBuffer[uiRowIdx + i].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
@@ -307,8 +350,23 @@ void render_partial_updates(HANDLE hOut, bool forceFullWrite) {
     }
 }
 
+void check_extra_life() {
+    if (!extraLifeGiven && player.score >= 10000) {
+        extraLifeGiven = true;
+        player.lives++;
+        playSe(SND_EXTRA_LIFE);
+    }
+}
+
 void move_ghost(Ghost* g) {
-    if (!g->alive) { g->r = g->sr; g->c = g->sc; g->alive = true; g->vulnerable = false; return; }
+    if (!g->alive) {
+        g->r = g->sr;
+        g->c = g->sc;
+        g->alive = true;
+        g->vulnerable = false;
+        playSe(SND_GHOSTEATEN);
+        return;
+    }
 
     int dr[4] = { -1, 0, 1, 0 };
     int dc[4] = { 0, 1, 0, -1 };
@@ -452,12 +510,16 @@ void check_collect_and_collision() {
         globalVulnerable = true;
         powerEndTime = GetTickCount() + 8000;
         for (int i = 0; i < 4; i++) ghosts[i].vulnerable = true;
-        playSoundIfExists(SND_POWER, SND_ASYNC);
+        stopSiren();
+        playSe(SND_POWER);
+        sirenResumeTick = GetTickCount() + 8000;
+        check_extra_life();
     }
     else if (coin[player.r][player.c]) {
         coin[player.r][player.c] = false;
         player.score += 10;
-        playSoundIfExists(SND_COIN, SND_ASYNC);
+        playSe(SND_DOT);
+        check_extra_life();
     }
 
     for (int i = 0; i < 4; i++) {
@@ -467,11 +529,14 @@ void check_collect_and_collision() {
             if (g->vulnerable || globalVulnerable) {
                 player.score += 200;
                 g->alive = false;
-                playSoundIfExists(SND_EATGHOST, SND_ASYNC);
+                playSe(SND_EATGHOST);
+                check_extra_life();
             }
             else {
                 player.lives--;
-                playSoundIfExists(SND_DIE, SND_ASYNC);
+                stopSiren();
+                playSe(SND_CAUGHT);
+                sirenResumeTick = GetTickCount() + 3000;
 
                 int bestR = -1, bestC = -1, bestDist = -1;
                 for (int r = 0; r < MAP_ROWS; r++) {
@@ -502,9 +567,9 @@ void check_collect_and_collision() {
     }
 }
 
-//게임 오버 화면
 void show_game_over(HANDLE hOut, int finalScore) {
-    playSoundIfExists(SND_GAMEOVER, SND_ASYNC);
+    stopSiren();
+    playSe(SND_GAMEOVER);
 
     for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) {
         frameBuffer[i].Char.UnicodeChar = L' ';
@@ -581,7 +646,6 @@ int main() {
     for (int i = 0; intro3[i]; i++) frameBuffer[(r0 + 2) * SCREEN_COLS + c0 + i].Char.UnicodeChar = intro3[i];
     for (int i = 0; intro1[i]; i++) frameBuffer[(r0 + 3) * SCREEN_COLS + c0 + i].Char.UnicodeChar = intro1[i];
 
-
     COORD bufSize = { (SHORT)SCREEN_COLS, (SHORT)SCREEN_ROWS };
     COORD bufCoord = { 0, 0 };
     SMALL_RECT writeRegion = { 0, 0, (SHORT)(SCREEN_COLS - 1), (SHORT)(SCREEN_ROWS - 1) };
@@ -591,7 +655,9 @@ int main() {
     while (!(GetAsyncKeyState(VK_RETURN) & 0x8000))
         Sleep(40);
 
-    playSoundIfExists(SND_START, SND_ASYNC);
+    playSe(SND_COIN);
+    Sleep(500);
+    playSe(SND_START);
 
     system("cls");
     init_world();
@@ -599,6 +665,8 @@ int main() {
     modeSwitchTime = GetTickCount() + phaseDurations[0];
     currentGhostMode = SCATTER;
     modePhase = 0;
+    sirenOn = false;
+    sirenResumeTick = GetTickCount() + 4000;
 
     compose_frameBuffer_from_game_state();
     render_partial_updates(hOut, true);
@@ -695,9 +763,13 @@ int main() {
             lastGhostMoveTick = nowTick;
         }
 
-        if (globalVulnerable && GetTickCount() >= powerEndTime) {
+        if (globalVulnerable && nowTick >= powerEndTime) {
             globalVulnerable = false;
             for (int i = 0; i < 4; i++) ghosts[i].vulnerable = false;
+        }
+
+        if (!globalVulnerable && player.lives > 0 && nowTick >= sirenResumeTick && !sirenOn) {
+            startSiren();
         }
 
         if (nowTick - lastRenderTick >= renderIntervalMs) {
@@ -713,7 +785,8 @@ int main() {
                 if (coin[r][c] || powerPellet[r][c]) remain++;
 
         if (remain == 0) {
-            playSoundIfExists(SND_CLEAR, SND_ASYNC);
+            stopSiren();
+            playSe(SND_CLEAR);
 
             for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) {
                 frameBuffer[i].Char.UnicodeChar = L' ';
@@ -734,7 +807,7 @@ int main() {
         Sleep(1);
     }
 
-    PlaySoundW(NULL, NULL, 0);
+    stopAllSounds();
 
     free(frameBuffer); free(prevFrameBuffer); free(tmpRowBuffer);
     HANDLE stdOut = GetStdHandle(STD_OUTPUT_HANDLE);

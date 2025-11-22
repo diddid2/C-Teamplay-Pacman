@@ -131,6 +131,25 @@
     <ClCompile Include="Team1.c" />
     <ClCompile Include="Team2.c" />
   </ItemGroup>
+  <ItemGroup>
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\01. Coin - Credit.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\02. Game Start.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\03. Dot.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\04. Energizer - Power Pellet.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\05. Eat Ghost.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\06. Ghost Eaten.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\07. Extra Life.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\08. Fruit.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\09. First Intermission - They Meet.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\10. Second Intermission - The Chase.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\11. Third Intermission - Junior.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\12. Caught by a Ghost.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\13. Siren.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\14. Siren.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\15. Siren.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\16. Siren.mp3" />
+    <Media Include="..\..\..\..\Desktop\2학년 2학기 시험공부\17. Siren.mp3" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
