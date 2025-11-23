@@ -640,6 +640,51 @@ void show_game_over(HANDLE hOut, int finalScore) {
     while (!(GetAsyncKeyState(VK_RETURN) & 0x8000)) Sleep(50);
 }
 
+
+
+// 클리어 화면
+void show_game_clear(HANDLE hOut, int finalScore) {
+    stopAllSounds();
+    playSe1(SND_GAMEOVER);
+
+    for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) {
+        frameBuffer[i].Char.UnicodeChar = L' ';
+        frameBuffer[i].Attributes = 0;
+    }
+
+    wchar_t title[] = L"======== 축하합니다! 게임 클리어 ========";
+    wchar_t scoreLine[128];
+    swprintf(scoreLine, 128, L"FINAL SCORE: %d", finalScore);
+    wchar_t prompt[] = L"엔터 키를 누르면 종료됩니다";
+
+    int rr = 10;
+    int cc_title = (SCREEN_COLS - (int)wcslen(title)) / 2;
+    int cc_score = (SCREEN_COLS - (int)wcslen(scoreLine)) / 2 + 2;
+    int cc_prompt = (SCREEN_COLS - (int)wcslen(prompt)) / 2 - 3;
+
+    for (int i = 0; title[i]; i++) {
+        frameBuffer[rr * SCREEN_COLS + cc_title + i].Char.UnicodeChar = title[i];
+        frameBuffer[rr * SCREEN_COLS + cc_title + i].Attributes = FOREGROUND_RED | FOREGROUND_INTENSITY;
+    }
+    for (int i = 0; scoreLine[i]; i++) {
+        frameBuffer[(rr + 2) * SCREEN_COLS + cc_score + i].Char.UnicodeChar = scoreLine[i];
+        frameBuffer[(rr + 2) * SCREEN_COLS + cc_score + i].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+    }
+    for (int i = 0; prompt[i]; i++) {
+        frameBuffer[(rr + 4) * SCREEN_COLS + cc_prompt + i].Char.UnicodeChar = prompt[i];
+        frameBuffer[(rr + 4) * SCREEN_COLS + cc_prompt + i].Attributes = FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+    }
+
+    COORD bufSize = { (SHORT)SCREEN_COLS, (SHORT)SCREEN_ROWS };
+    COORD bufCoord = { 0, 0 };
+    SMALL_RECT writeRegion = { 0, 0, (SHORT)(SCREEN_COLS - 1), (SHORT)(SCREEN_ROWS - 1) };
+    WriteConsoleOutputW(hOut, frameBuffer, bufSize, bufCoord, &writeRegion);
+
+    while (!(GetAsyncKeyState(VK_RETURN) & 0x8000)) Sleep(50);
+}
+
+
+
 int main() {
     srand((unsigned int)time(NULL));
     setConsoleSizeAndFont();
@@ -840,9 +885,14 @@ int main() {
             for (int i = 0; msg1[i]; i++) frameBuffer[(rr)*SCREEN_COLS + cc + i].Char.UnicodeChar = msg1[i];
             for (int i = 0; msg2[i]; i++) frameBuffer[(rr + 2) * SCREEN_COLS + cc + i].Char.UnicodeChar = msg2[i];
             WriteConsoleOutputW(hOut, frameBuffer, bufSize, bufCoord, &writeRegion);
+
+            // 클리어 화면
+            show_game_clear(hOut, player.score);
+
             while (!(GetAsyncKeyState(VK_RETURN) & 0x8000)) Sleep(50);
             break;
         }
+        
 
         if (player.lives <= 0) { show_game_over(hOut, player.score); break; }
 
