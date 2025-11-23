@@ -54,42 +54,61 @@ DWORD ghostMoveInterval = 300;
 int currentDirR = 0, currentDirC = 0;
 int desiredDirR = 0, desiredDirC = 0;
 
-const wchar_t* SND_START = L"./snd\\02. Game Start.mp3";
-const wchar_t* SND_COIN = L"./snd\\01. Coin - Credit.mp3";
-const wchar_t* SND_DOT = L"./snd\\03. Dot.mp3";
-const wchar_t* SND_POWER = L"./snd\\04. Energizer - Power Pellet.mp3";
-const wchar_t* SND_EATGHOST = L"./snd\\05. Eat Ghost.mp3";
-const wchar_t* SND_GHOSTEATEN = L"./snd\\06. Ghost Eaten.mp3";
-const wchar_t* SND_EXTRA_LIFE = L"./snd\\07. Extra Life.mp3";
-const wchar_t* SND_FRUIT = L"./snd\\08. Fruit.mp3";
-const wchar_t* SND_CLEAR = L"./snd\\09. First Intermission - They Meet.mp3";
-const wchar_t* SND_GAMEOVER = L"./snd\\10. Second Intermission - The Chase.mp3";
-const wchar_t* SND_CAUGHT = L"./snd\\12. Caught by a Ghost.mp3";
-const wchar_t* SND_SIREN = L"./snd\\13. Siren.mp3";
+const wchar_t* SND_START = L"snd\\02. Game Start.mp3";
+const wchar_t* SND_COIN = L"snd\\01. Coin - Credit.mp3";
+const wchar_t* SND_DOT = L"snd\\03. Dot.mp3";
+const wchar_t* SND_POWER = L"snd\\04. Energizer - Power Pellet.mp3";
+const wchar_t* SND_EATGHOST = L"snd\\05. Eat Ghost.mp3";
+const wchar_t* SND_GHOSTEATEN = L"snd\\06. Ghost Eaten.mp3";
+const wchar_t* SND_EXTRA_LIFE = L"snd\\07. Extra Life.mp3";
+const wchar_t* SND_FRUIT = L"snd\\08. Fruit.mp3";
+const wchar_t* SND_CLEAR = L"snd\\09. First Intermission - They Meet.mp3";
+const wchar_t* SND_GAMEOVER = L"snd\\10. Second Intermission - The Chase.mp3";
+const wchar_t* SND_CAUGHT = L"snd\\12. Caught by a Ghost.mp3";
+const wchar_t* SND_SIREN = L"snd\\13. Siren.mp3";
+const wchar_t* SND_SIREN_POWER = L"snd\\14. Siren.mp3";
 
 bool sirenOn = false;
-DWORD sirenResumeTick = 0;
 bool extraLifeGiven = false;
+DWORD lastPowerSirenTick = 0;
 
-void playSe(const wchar_t* path) {
+void playSe1(const wchar_t* path) {
     if (!path || !*path) return;
-    if (_waccess(path, 0) != 0) return;
     wchar_t cmd[512];
-    mciSendStringW(L"stop se", NULL, 0, NULL);
-    mciSendStringW(L"close se", NULL, 0, NULL);
-    swprintf(cmd, 512, L"open \"%s\" type mpegvideo alias se", path);
+    mciSendStringW(L"stop se1", NULL, 0, NULL);
+    mciSendStringW(L"close se1", NULL, 0, NULL);
+    swprintf(cmd, 512, L"open \"%s\" alias se1", path);
     if (mciSendStringW(cmd, NULL, 0, NULL) != 0) return;
-    mciSendStringW(L"play se from 0", NULL, 0, NULL);
+    mciSendStringW(L"play se1 from 0", NULL, 0, NULL);
+}
+
+void playSe2(const wchar_t* path) {
+    if (!path || !*path) return;
+    wchar_t cmd[512];
+    mciSendStringW(L"stop se2", NULL, 0, NULL);
+    mciSendStringW(L"close se2", NULL, 0, NULL);
+    swprintf(cmd, 512, L"open \"%s\" alias se2", path);
+    if (mciSendStringW(cmd, NULL, 0, NULL) != 0) return;
+    mciSendStringW(L"play se2 from 0", NULL, 0, NULL);
+}
+
+void playSirenFX(const wchar_t* path) {
+    if (!path || !*path) return;
+    wchar_t cmd[512];
+    mciSendStringW(L"stop sirfx", NULL, 0, NULL);
+    mciSendStringW(L"close sirfx", NULL, 0, NULL);
+    swprintf(cmd, 512, L"open \"%s\" alias sirfx", path);
+    if (mciSendStringW(cmd, NULL, 0, NULL) != 0) return;
+    mciSendStringW(L"play sirfx from 0", NULL, 0, NULL);
 }
 
 void startSiren() {
     if (sirenOn) return;
     if (!SND_SIREN || !*SND_SIREN) return;
-    if (_waccess(SND_SIREN, 0) != 0) return;
     wchar_t cmd[512];
     mciSendStringW(L"stop bgm", NULL, 0, NULL);
     mciSendStringW(L"close bgm", NULL, 0, NULL);
-    swprintf(cmd, 512, L"open \"%s\" type mpegvideo alias bgm", SND_SIREN);
+    swprintf(cmd, 512, L"open \"%s\" alias bgm", SND_SIREN);
     if (mciSendStringW(cmd, NULL, 0, NULL) != 0) return;
     mciSendStringW(L"play bgm repeat", NULL, 0, NULL);
     sirenOn = true;
@@ -102,10 +121,22 @@ void stopSiren() {
 }
 
 void stopAllSounds() {
-    mciSendStringW(L"stop se", NULL, 0, NULL);
-    mciSendStringW(L"close se", NULL, 0, NULL);
+    mciSendStringW(L"stop se1", NULL, 0, NULL);
+    mciSendStringW(L"close se1", NULL, 0, NULL);
+    mciSendStringW(L"stop se2", NULL, 0, NULL);
+    mciSendStringW(L"close se2", NULL, 0, NULL);
+    mciSendStringW(L"stop sirfx", NULL, 0, NULL);
+    mciSendStringW(L"close sirfx", NULL, 0, NULL);
     mciSendStringW(L"stop bgm", NULL, 0, NULL);
     mciSendStringW(L"close bgm", NULL, 0, NULL);
+}
+
+void playClearBgm() {
+    wchar_t cmd[512];
+    stopAllSounds();
+    swprintf(cmd, 512, L"open \"%s\" alias bgm", SND_CLEAR);
+    if (mciSendStringW(cmd, NULL, 0, NULL) != 0) return;
+    mciSendStringW(L"play bgm from 0", NULL, 0, NULL);
 }
 
 wchar_t* wcmap[MAP_ROWS] = {
@@ -222,6 +253,8 @@ void init_world() {
     currentDirR = 0;
     desiredDirC = 0;
     desiredDirR = 0;
+    extraLifeGiven = false;
+    lastPowerSirenTick = 0;
 
     for (int i = ghostCount; i < 4; i++) {
         bool placed = false;
@@ -354,7 +387,7 @@ void check_extra_life() {
     if (!extraLifeGiven && player.score >= 10000) {
         extraLifeGiven = true;
         player.lives++;
-        playSe(SND_EXTRA_LIFE);
+        playSe1(SND_EXTRA_LIFE);
     }
 }
 
@@ -364,7 +397,7 @@ void move_ghost(Ghost* g) {
         g->c = g->sc;
         g->alive = true;
         g->vulnerable = false;
-        playSe(SND_GHOSTEATEN);
+        playSe1(SND_GHOSTEATEN);
         return;
     }
 
@@ -511,14 +544,16 @@ void check_collect_and_collision() {
         powerEndTime = GetTickCount() + 8000;
         for (int i = 0; i < 4; i++) ghosts[i].vulnerable = true;
         stopSiren();
-        playSe(SND_POWER);
-        sirenResumeTick = GetTickCount() + 8000;
+        playSe2(SND_POWER);
+        lastPowerSirenTick = 0;
         check_extra_life();
     }
+
+
     else if (coin[player.r][player.c]) {
         coin[player.r][player.c] = false;
         player.score += 10;
-        playSe(SND_DOT);
+        playSe1(SND_DOT);
         check_extra_life();
     }
 
@@ -529,14 +564,12 @@ void check_collect_and_collision() {
             if (g->vulnerable || globalVulnerable) {
                 player.score += 200;
                 g->alive = false;
-                playSe(SND_EATGHOST);
+                playSe1(SND_EATGHOST);
                 check_extra_life();
             }
             else {
                 player.lives--;
-                stopSiren();
-                playSe(SND_CAUGHT);
-                sirenResumeTick = GetTickCount() + 3000;
+                playSe1(SND_CAUGHT);
 
                 int bestR = -1, bestC = -1, bestDist = -1;
                 for (int r = 0; r < MAP_ROWS; r++) {
@@ -568,8 +601,8 @@ void check_collect_and_collision() {
 }
 
 void show_game_over(HANDLE hOut, int finalScore) {
-    stopSiren();
-    playSe(SND_GAMEOVER);
+    stopAllSounds();
+    playSe1(SND_GAMEOVER);
 
     for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) {
         frameBuffer[i].Char.UnicodeChar = L' ';
@@ -583,8 +616,8 @@ void show_game_over(HANDLE hOut, int finalScore) {
 
     int rr = 10;
     int cc_title = (SCREEN_COLS - (int)wcslen(title)) / 2;
-    int cc_score = (SCREEN_COLS - (int)wcslen(scoreLine)) / 2;
-    int cc_prompt = (SCREEN_COLS - (int)wcslen(prompt)) / 2;
+    int cc_score = (SCREEN_COLS - (int)wcslen(scoreLine)) / 2+2;
+    int cc_prompt = (SCREEN_COLS - (int)wcslen(prompt)) / 2-3;
 
     for (int i = 0; title[i]; i++) {
         frameBuffer[rr * SCREEN_COLS + cc_title + i].Char.UnicodeChar = title[i];
@@ -655,9 +688,9 @@ int main() {
     while (!(GetAsyncKeyState(VK_RETURN) & 0x8000))
         Sleep(40);
 
-    playSe(SND_COIN);
+    playSe1(SND_COIN);
     Sleep(500);
-    playSe(SND_START);
+    playSe1(SND_START);
 
     system("cls");
     init_world();
@@ -666,7 +699,7 @@ int main() {
     currentGhostMode = SCATTER;
     modePhase = 0;
     sirenOn = false;
-    sirenResumeTick = GetTickCount() + 4000;
+    startSiren();
 
     compose_frameBuffer_from_game_state();
     render_partial_updates(hOut, true);
@@ -766,10 +799,20 @@ int main() {
         if (globalVulnerable && nowTick >= powerEndTime) {
             globalVulnerable = false;
             for (int i = 0; i < 4; i++) ghosts[i].vulnerable = false;
+
+            mciSendStringW(L"stop sirfx", NULL, 0, NULL);
+            mciSendStringW(L"close sirfx", NULL, 0, NULL);
+            lastPowerSirenTick = 0;
+
+            startSiren();
         }
 
-        if (!globalVulnerable && player.lives > 0 && nowTick >= sirenResumeTick && !sirenOn) {
-            startSiren();
+
+        if (globalVulnerable) {
+            if (lastPowerSirenTick == 0 || nowTick - lastPowerSirenTick >= 700) {
+                playSirenFX(SND_SIREN_POWER);
+                lastPowerSirenTick = nowTick;
+            }
         }
 
         if (nowTick - lastRenderTick >= renderIntervalMs) {
@@ -785,8 +828,7 @@ int main() {
                 if (coin[r][c] || powerPellet[r][c]) remain++;
 
         if (remain == 0) {
-            stopSiren();
-            playSe(SND_CLEAR);
+            playClearBgm();
 
             for (int i = 0; i < SCREEN_ROWS * SCREEN_COLS; i++) {
                 frameBuffer[i].Char.UnicodeChar = L' ';
